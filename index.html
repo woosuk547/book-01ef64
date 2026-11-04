@@ -12,22 +12,54 @@
   html,body{ height:100%; margin:0; background:var(--bg); color:var(--ink);
     font-family:-apple-system,BlinkMacSystemFont,'Apple SD Gothic Neo','Noto Sans KR',sans-serif; }
   body{ display:grid; place-items:center; padding:24px; box-sizing:border-box; text-align:center; font-size:16px; line-height:1.5; word-break:keep-all; }
+  #retry{ display:block; margin:14px auto 0; min-height:44px; padding:0 20px; border:0; border-radius:999px; background:var(--ink); color:var(--bg); font:inherit; font-weight:600; cursor:pointer; }
+  #retry[hidden]{ display:none; }
 </style>
 </head>
 <body>
-<p id="msg">책자를 펼치는 중이에요.</p>
+<div><p id="msg" role="status" style="margin:0">책자를 펼치는 중이에요.</p><button id="retry" type="button" hidden>다시 열기</button></div>
 <script>
 (async () => {
   const msg = document.getElementById('msg');
+  const retry = document.getElementById('retry');
+  retry.addEventListener('click', () => location.reload());
   const m = location.hash.match(/k=([A-Za-z0-9_-]+)/);
   if (!m) { msg.textContent = '받은 주소를 # 뒤까지 전부 넣어야 열려요.'; return; }
+  // 한 번 열면 다음부터 인터넷 없이도 열리게 저장한다
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+
+  // 받는 만큼 진행률을 보여 주며 끝까지 읽는다
+  async function download() {
+    const res = await fetch('book.bin', { cache: 'no-cache' });
+    if (!res.ok) throw new Error('fetch');
+    const total = res.headers.get('content-encoding') ? 0 : Number(res.headers.get('content-length'));
+    if (!total || !res.body) return res.arrayBuffer();
+    const reader = res.body.getReader();
+    const buf = new Uint8Array(total);
+    let got = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf.set(value, got);
+      got += value.length;
+      msg.textContent = `책자를 받는 중이에요. ${Math.floor((got / total) * 100)}%`;
+    }
+    return buf.buffer;
+  }
+
+  let buf;
   try {
+    buf = await download();
+  } catch (e) {
+    msg.textContent = '인터넷이 끊겨 책자를 받지 못했어요. 연결되면 다시 열어 주세요. 한 번 열린 기기는 그다음부터 인터넷 없이도 열려요.';
+    retry.hidden = false;
+    return;
+  }
+  try {
+    msg.textContent = '책자를 펼치는 중이에요.';
     const raw = atob(m[1].replace(/-/g, '+').replace(/_/g, '/'));
     const keyBytes = Uint8Array.from(raw, (c) => c.charCodeAt(0));
     const key = await crypto.subtle.importKey('raw', keyBytes, 'AES-GCM', false, ['decrypt']);
-    const res = await fetch('book.bin', { cache: 'no-cache' });
-    if (!res.ok) throw new Error('fetch');
-    const buf = await res.arrayBuffer();
     const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: new Uint8Array(buf, 0, 12) }, key, new Uint8Array(buf, 12));
     const stream = new Blob([plain]).stream().pipeThrough(new DecompressionStream('gzip'));
     const html = await new Response(stream).text();
