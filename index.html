@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<meta name="referrer" content="no-referrer">
+<title>여행 책자</title>
+<style>
+  :root{ --bg:#dfe8f2; --ink:#24233f; }
+  @media (prefers-color-scheme: dark){ :root{ --bg:#1b1a30; --ink:#fffaf2; } }
+  html,body{ height:100%; margin:0; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,'Apple SD Gothic Neo','Noto Sans KR',sans-serif; }
+  body{ display:grid; place-items:center; padding:24px; box-sizing:border-box; text-align:center; font-size:16px; line-height:1.5; word-break:keep-all; }
+</style>
+</head>
+<body>
+<p id="msg">책자를 펼치는 중이에요.</p>
+<script>
+(async () => {
+  const msg = document.getElementById('msg');
+  const m = location.hash.match(/k=([A-Za-z0-9_-]+)/);
+  if (!m) { msg.textContent = '받은 주소를 # 뒤까지 전부 넣어야 열려요.'; return; }
+  try {
+    const raw = atob(m[1].replace(/-/g, '+').replace(/_/g, '/'));
+    const keyBytes = Uint8Array.from(raw, (c) => c.charCodeAt(0));
+    const key = await crypto.subtle.importKey('raw', keyBytes, 'AES-GCM', false, ['decrypt']);
+    const res = await fetch('book.bin', { cache: 'no-cache' });
+    if (!res.ok) throw new Error('fetch');
+    const buf = await res.arrayBuffer();
+    const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: new Uint8Array(buf, 0, 12) }, key, new Uint8Array(buf, 12));
+    const stream = new Blob([plain]).stream().pipeThrough(new DecompressionStream('gzip'));
+    const html = await new Response(stream).text();
+    document.open();
+    document.write(html);
+    document.close();
+  } catch (e) {
+    msg.textContent = '책자를 열지 못했어요. 주소가 잘렸는지 확인해 주세요.';
+  }
+})();
+</script>
+</body>
+</html>
